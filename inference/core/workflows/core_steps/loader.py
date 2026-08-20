@@ -951,6 +951,11 @@ else:
     from inference.core.workflows.core_steps.models.third_party.qr_code_detection.v1_tensor import (
         QRCodeDetectorBlockV1,
     )
+
+# Conformance check block (no tensor variant needed - outputs are JSON/scalars)
+from inference.core.workflows.core_steps.models.roboflow.conformance_check.v1 import (
+    RoboflowConformanceCheckBlockV1,
+)
 if not ENABLE_TENSOR_DATA_REPRESENTATION:
     from inference.core.workflows.core_steps.sampling.identify_changes.v1 import (
         IdentifyChangesBlockV1,
@@ -1875,6 +1880,7 @@ def load_blocks() -> List[Type[WorkflowBlock]]:
         RoboflowObjectDetectionModelBlockV3,
         VLMAsClassifierBlockV2,
         VLMAsDetectorBlockV2,
+        RoboflowConformanceCheckBlockV1,
         IdentifyOutliersBlockV1,
         IdentifyChangesBlockV1,
         EnvironmentSecretsStoreBlockV1,
