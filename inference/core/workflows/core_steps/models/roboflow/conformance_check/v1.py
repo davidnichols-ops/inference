@@ -1,15 +1,9 @@
+import json
 from typing import List, Literal, Optional, Type, Union
 
 from pydantic import ConfigDict, Field, model_validator
 
-from inference.core.env import (
-    LOCAL_INFERENCE_API_URL,
-    WORKFLOWS_REMOTE_API_TARGET,
-    WORKFLOWS_REMOTE_EXECUTION_MAX_STEP_BATCH_SIZE,
-    WORKFLOWS_REMOTE_EXECUTION_MAX_STEP_CONCURRENT_REQUESTS,
-)
 from inference.core.workflows.core_steps.common.entities import StepExecutionMode
-from inference.core.workflows.execution_engine.constants import INFERENCE_ID_KEY
 from inference.core.workflows.execution_engine.entities.base import (
     Batch,
     OutputDefinition,
@@ -23,7 +17,6 @@ from inference.core.workflows.execution_engine.entities.types import (
     INTEGER_KIND,
     LIST_OF_VALUES_KIND,
     ROBOFLOW_MODEL_ID_KIND,
-    ROBOFLOW_PROJECT_KIND,
     STRING_KIND,
     FloatZeroToOne,
     ImageInputField,
@@ -36,7 +29,6 @@ from inference.core.workflows.prototypes.block import (
     WorkflowBlock,
     WorkflowBlockManifest,
     roboflow_platform_model,
-    roboflow_platform_project,
 )
 
 LONG_DESCRIPTION = """
@@ -61,7 +53,15 @@ class BlockManifest(WorkflowBlockManifest):
             "long_description": LONG_DESCRIPTION,
             "license": "Apache-2.0",
             "block_type": "model",
-            "search_keywords": ["conformance", "verification", "cvconform", "export", "onnx", "tensorrt", "coreml"],
+            "search_keywords": [
+                "conformance",
+                "verification",
+                "cvconform",
+                "export",
+                "onnx",
+                "tensorrt",
+                "coreml",
+            ],
             "ui_manifest": {
                 "section": "model",
                 "icon": "far fa-check-circle",
@@ -110,7 +110,9 @@ class BlockManifest(WorkflowBlockManifest):
         default=0.4,
         description="Custom confidence threshold",
         json_schema_extra={
-            "relevant_for": {"confidence_mode": {"values": ["custom"], "required": True}},
+            "relevant_for": {
+                "confidence_mode": {"values": ["custom"], "required": True}
+            },
         },
     )
     seed: Union[int, Selector(kind=[INTEGER_KIND])] = Field(
@@ -129,12 +131,20 @@ class BlockManifest(WorkflowBlockManifest):
     @model_validator(mode="after")
     def validate(self) -> "BlockManifest":
         if self.confidence_mode == "custom" and self.custom_confidence is None:
-            raise ValueError("`custom_confidence` is required when `confidence_mode` is 'custom'")
+            raise ValueError(
+                "`custom_confidence` is required when `confidence_mode` is 'custom'"
+            )
         return self
 
     @classmethod
     def get_compatible_task_types(cls) -> Optional[List[str]]:
-        return ["object-detection", "instance-segmentation", "classification", "keypoint-detection", "semantic-segmentation"]
+        return [
+            "object-detection",
+            "instance-segmentation",
+            "classification",
+            "keypoint-detection",
+            "semantic-segmentation",
+        ]
 
     def discover_dependent_resources(self) -> Optional[List[DependentResource]]:
         return [roboflow_platform_model(model_id=self.model_id)]
@@ -241,24 +251,38 @@ class RoboflowConformanceCheckBlockV1(WorkflowBlock):
 
         # Get the model to access its file path
         model = self._model_manager[model_id]
-        
-        # Try to get the model file path
-        model_path = getattr(model, "model_path", None) or getattr(model, "weights_path", None)
-        
+
+        # Roboflow models expose a `weights_file` filename and a `cache_file()`
+        # helper that resolves it to an absolute path; `cache_dir` is the fallback.
+        model_path = getattr(model, "model_path", None)
         if not model_path:
-            return [{
-                "inference_id": None,
-                "conformance_report": json.dumps({"error": "Model path not available"}),
-                "overall_conformant": False,
-                "conformance_scores": [],
-                "findings": [],
-                "model_id": model_id,
-            }]
+            weights_file = getattr(model, "weights_file", None)
+            cache_file = getattr(model, "cache_file", None)
+            if weights_file and callable(cache_file):
+                model_path = cache_file(weights_file)
+            elif weights_file and isinstance(weights_file, str):
+                model_path = weights_file
+        if not model_path:
+            model_path = getattr(model, "cache_dir", None)
+
+        if not model_path:
+            return [
+                {
+                    "inference_id": None,
+                    "conformance_report": json.dumps(
+                        {"error": "Model path not available"}
+                    ),
+                    "overall_conformant": False,
+                    "conformance_scores": [],
+                    "findings": [],
+                    "model_id": model_id,
+                }
+            ]
 
         # Run cvconform verification
         try:
             from cvconform import verify
-            
+
             report = verify(
                 model=model_path,
                 reference=reference_runtime,
@@ -267,23 +291,31 @@ class RoboflowConformanceCheckBlockV1(WorkflowBlock):
                 num_samples=num_samples,
             )
         except ImportError:
-            return [{
-                "inference_id": None,
-                "conformance_report": json.dumps({"error": "cvconform not installed. Install with: pip install cvconform"}),
-                "overall_conformant": False,
-                "conformance_scores": [],
-                "findings": [],
-                "model_id": model_id,
-            }]
+            return [
+                {
+                    "inference_id": None,
+                    "conformance_report": json.dumps(
+                        {
+                            "error": "cvconform not installed. Install with: pip install cvconform"
+                        }
+                    ),
+                    "overall_conformant": False,
+                    "conformance_scores": [],
+                    "findings": [],
+                    "model_id": model_id,
+                }
+            ]
         except Exception as e:
-            return [{
-                "inference_id": None,
-                "conformance_report": json.dumps({"error": str(e)}),
-                "overall_conformant": False,
-                "conformance_scores": [],
-                "findings": [],
-                "model_id": model_id,
-            }]
+            return [
+                {
+                    "inference_id": None,
+                    "conformance_report": json.dumps({"error": str(e)}),
+                    "overall_conformant": False,
+                    "conformance_scores": [],
+                    "findings": [],
+                    "model_id": model_id,
+                }
+            ]
 
         # Extract results
         overall_conformant = True
@@ -293,39 +325,45 @@ class RoboflowConformanceCheckBlockV1(WorkflowBlock):
         for target, target_report in report.get("targets", {}).items():
             score = target_report.get("overall_score", 0.0)
             is_conformant = target_report.get("is_conformant", False)
-            conformance_scores.append({
-                "target": target,
-                "score": score,
-                "is_conformant": is_conformant,
-            })
+            conformance_scores.append(
+                {
+                    "target": target,
+                    "score": score,
+                    "is_conformant": is_conformant,
+                }
+            )
             if not is_conformant:
                 overall_conformant = False
 
             for div in target_report.get("divergences", []):
-                findings.append({
-                    "target": target,
-                    "type": "conformance_divergence",
-                    "output": div.get("output", "unknown"),
-                    "metric": div.get("metric", "unknown"),
-                    "magnitude": div.get("magnitude", 0.0),
-                    "threshold": div.get("threshold", 0.0),
-                    "mechanism": div.get("mechanism", "unknown"),
-                    "confidence": div.get("confidence", 0.0),
-                })
+                findings.append(
+                    {
+                        "target": target,
+                        "type": "conformance_divergence",
+                        "output": div.get("output", "unknown"),
+                        "metric": div.get("metric", "unknown"),
+                        "magnitude": div.get("magnitude", 0.0),
+                        "threshold": div.get("threshold", 0.0),
+                        "mechanism": div.get("mechanism", "unknown"),
+                        "confidence": div.get("confidence", 0.0),
+                    }
+                )
 
         # Add root-cause findings
         for finding in report.get("findings", []):
             if finding:
-                findings.append({
-                    "target": finding.get("backend", "unknown"),
-                    "type": "root_cause",
-                    "affected": finding.get("affected", "unknown"),
-                    "cause": finding.get("cause", "unknown"),
-                    "mechanism": finding.get("mechanism", "unknown"),
-                    "impact": finding.get("impact", ""),
-                    "confidence": finding.get("confidence", 0.0),
-                    "fixes": finding.get("fixes", []),
-                })
+                findings.append(
+                    {
+                        "target": finding.get("backend", "unknown"),
+                        "type": "root_cause",
+                        "affected": finding.get("affected", "unknown"),
+                        "cause": finding.get("cause", "unknown"),
+                        "mechanism": finding.get("mechanism", "unknown"),
+                        "impact": finding.get("impact", ""),
+                        "confidence": finding.get("confidence", 0.0),
+                        "fixes": finding.get("fixes", []),
+                    }
+                )
 
         inference_ids = [None] * len(images)
 
@@ -356,13 +394,15 @@ class RoboflowConformanceCheckBlockV1(WorkflowBlock):
         # conformance check endpoint (to be implemented on server side)
         # For now, fall back to a placeholder response
         inference_ids = [None] * len(images)
-        
+
         return [
             {
                 "inference_id": inference_id,
-                "conformance_report": json.dumps({
-                    "error": "Remote conformance check not yet implemented. Run locally or use cvconform CLI directly."
-                }),
+                "conformance_report": json.dumps(
+                    {
+                        "error": "Remote conformance check not yet implemented. Run locally or use cvconform CLI directly."
+                    }
+                ),
                 "overall_conformant": False,
                 "conformance_scores": [],
                 "findings": [],
@@ -370,6 +410,3 @@ class RoboflowConformanceCheckBlockV1(WorkflowBlock):
             }
             for inference_id in inference_ids
         ]
-
-
-import json
